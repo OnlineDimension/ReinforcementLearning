@@ -2,6 +2,32 @@ import numpy as np
 import gymnasium as gym 
 import time
 from gymnasium.envs.toy_text.frozen_lake import generate_random_map
+from gymnasium.envs.toy_text.frozen_lake import FrozenLakeEnv
+
+class CustomFrozenLakeEnv(FrozenLakeEnv):
+    def __init__(self, **kwargs):
+        super(CustomFrozenLakeEnv, self).__init__(**kwargs)
+    
+    def step(self, action):
+        # Perform the action
+        observations, reward, terminated, truncated, info = super(CustomFrozenLakeEnv, self).step(action)
+        # If the episode is done and the reward is 0, it means we fell in a hole
+        if terminated and reward == 0:
+            reward = -1  # Change the reward for falling in a hole to -1
+        return observations, reward, terminated, truncated, info
+
+# To use the custom environment, you need to register it with Gym
+from gymnasium.envs.registration import register, registry
+
+# Check if the environment is already registered to avoid duplication errors
+if True:#'CustomFrozenLake-v0' not in registry.env_specs:
+    register(
+        id='CustomFrozenLake-v0',
+        entry_point=CustomFrozenLakeEnv,
+    )
+
+# Now you can create and use your custom environment
+#env = gym.make('CustomFrozenLake-v0')
 
 rng = np.random.default_rng()
 
@@ -198,7 +224,7 @@ def value_iteration(P, nS, nA, gamma=0.9, tol=1e-3):
        
     return V, pi
 
-def q_learning(env, nS, nA, gamma=0.9, alpha=0.5, epsilon=0.5, max_steps=100):
+def q_learning(env, nS, nA, gamma=0.9, alpha=0.9, epsilon=1, decay = 0.95, epochs = 100, max_steps=10):
     """
     Learn Q function and policy by using Q learning for a given
     gamma, alpha, epsilon and environment
@@ -215,71 +241,83 @@ def q_learning(env, nS, nA, gamma=0.9, alpha=0.5, epsilon=0.5, max_steps=100):
             pi (np.ndarray([nS])): policy resulting from Q iteration
 
     """
-
-    s, _ = env.reset()
     Q = np.zeros([nS,nA])
-    pi = np.zeros(nS, dtype=int)
+    pi = rng.integers(low=0, high=4, size=nS)
 
-    for _ in range(max_steps):
-        coin = rng.random()
-        if coin < 1 - epsilon:
-            a = np.argmax(Q[s])
-        else:
-            a = rng.integers(4)
-        s_, r, terminated, truncated, _ = env.step(a) 
-        Q[s,a] = (1-alpha)*Q[s,a] + alpha*(r+gamma*np.max(Q[s_]))
-        s = s_
-        if truncated or terminated:
-            s, _ = env.reset()
+    for _ in range(epochs):
+        s, _ = env.reset()
+        epsilon = epsilon*decay
+        for _ in range(max_steps):
+            coin = rng.random()
+            if coin < 1 - epsilon:
+                a = np.argmax(Q[s])
+            else:
+                a = rng.integers(4)
+            s_, r, terminated, truncated, _ = env.step(a) 
+            Q[s,a] = (1-alpha)*Q[s,a] + alpha*(r+gamma*np.max(Q[s_]))
+            s = s_
+            if truncated or terminated:
+                break
 
     for s in range(nS):
         pi[s] = np.argmax(Q[s])
        
     return Q, pi
 
-def render_single(env, pi, max_steps=50):
-
+def render_single(env, pi, max_steps=50, delay=1):
+    """
+    Renders a single game given environment, policy and maximum number of steps.
+    
+    Args: 
+            env: environment
+            pi: policy
+            max_steps: maximum number of steps to reach goal
+    Returns:
+            None
+    """
     R = 0
     obs, info = env.reset()
     for _ in range(max_steps):
         env.render()
-        time.sleep(0.25)
+        time.sleep(delay)
         a = pi[obs]  
         obs, r, terminated, truncated, info = env.step(a)
         R += r
 
         if terminated or truncated:
             break
-    #time.sleep(20)
     env.render()
+    time.sleep(delay)
     if not (terminated or truncated):
         print("Anna did not reach a terminal state in {} steps.".format(max_steps))
     else:
         print("Episode reward: %f" % R)
-    
+    env.close()
 
 if __name__ == "__main__":
+    #Create custom map
+    d = ['HHHHH',
+         'HSFFG',
+         'HHHHH']
     
-    '''
-    d2 = ['SFHFG',
-         'FFHFF',
-         'FFHFF',
-         'FFHFF',
-         'FFFFF']
-    '''
-    d = ['HHHHHHHH',
-         'HSFFFFFG',
-         'HHHHHHHH']
-    
-    env = gym.make('FrozenLake-v1', desc=d, is_slippery=False, render_mode="human")
+    #Define the environment
+    env = gym.make('CustomFrozenLake-v0', desc=d, map_name="4x4", is_slippery=False)#, render_mode="human")
 
+    #Find policy using policy iteration
     #V_pi, p_pi = policy_iteration(env.P, env.observation_space.n, env.action_space.n)
     #render_single(env, p_pi)
 
+    #Find policy using value iteration
     #V_vi, p_vi = value_iteration(env.P, env.observation_space.n, env.action_space.n)
     #render_single(env, p_vi)
 
-    Q, p = q_learning(env, env.observation_space.n, env.action_space.n) 
-    print(Q)
-    print(p)
-    #render_single(env,p)
+    #Find policy using Q-learning
+    nS, nA = env.observation_space.n, env.action_space.n
+    Q, pi = q_learning(env, env.observation_space.n, env.action_space.n, decay = 0.99, max_steps=50, epochs = 1000) 
+
+    #Print the final policy generated by Q
+    print(pi.reshape(3,5))
+
+    #Render a single game
+    env = gym.make('CustomFrozenLake-v0', desc=d, map_name="4x4", is_slippery=False, render_mode="human") 
+    render_single(env, pi, delay = 1, max_steps=6)
